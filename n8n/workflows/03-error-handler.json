@@ -1,0 +1,102 @@
+{
+  "name": "LendLoop · Error handler",
+  "nodes": [
+    {
+      "id": "1e480b3f-1684-4414-8121-af157e8d2e36",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "8dd04ad8-d430-4b24-bb29-4547d199d2b0",
+      "name": "Build failure report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\n// Error Trigger payload: { execution: { id, url, error, lastNodeExecuted }, workflow: { id, name } }\n// (or { trigger: { error } } when the trigger itself failed).\nconst d = $input.first().json;\nconst err = d.execution?.error || d.trigger?.error;\nreturn [{ json: signedCall('/n8n/failures', {\n  workflow: d.workflow?.name || 'Unknown workflow',\n  executionId: d.execution?.id != null ? String(d.execution.id) : undefined,\n  node: d.execution?.lastNodeExecuted || undefined,\n  message: errorText(err).slice(0, 500),\n}) }];"
+      }
+    },
+    {
+      "id": "2d9bacb4-a4b3-4371-93cc-8d23a1be6cb8",
+      "name": "Report to LendLoop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Build failure report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build failure report": {
+      "main": [
+        [
+          {
+            "node": "Report to LendLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

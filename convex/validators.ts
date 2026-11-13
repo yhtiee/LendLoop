@@ -35,6 +35,30 @@ export const vAutomationKind = v.union(
   v.literal("overdue_reminder")
 );
 
+/** Outbound webhook event types (Convex → n8n). */
+export const vLoanEventType = v.union(
+  v.literal("loan.requested"),
+  v.literal("loan.approved"),
+  v.literal("loan.declined"),
+  v.literal("loan.cancelled"),
+  v.literal("loan.returned")
+);
+
+/**
+ * The minimum n8n needs to send one email: who to tell, about which tool and dates.
+ * No user IDs, no other party's email, no request note.
+ */
+export const vLoanEventData = v.object({
+  loanId: v.string(),
+  toolName: v.string(),
+  startDate: v.string(),
+  endDate: v.string(),
+  status: v.string(),
+  recipient: v.object({ firstName: v.string(), email: v.string() }),
+  counterpartFirstName: v.string(),
+  url: v.string(),
+});
+
 /** ISO calendar day, e.g. "2026-11-13". Validated further in lib/dates.ts. */
 export const vDay = v.string();
 

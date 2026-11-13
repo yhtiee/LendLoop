@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { emitLoanEvent } from "./events";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -83,6 +84,7 @@ export async function retireTool(ctx: MutationCtx, tool: Doc<"tools">) {
     .take(100);
   for (const loan of pending) {
     await ctx.db.patch("loans", loan._id, { status: "declined", decidedAt: Date.now() });
+    await emitLoanEvent(ctx, { ...loan, status: "declined" }, "loan.declined");
   }
   return pending.length;
 }

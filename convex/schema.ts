@@ -5,6 +5,8 @@ import {
   vCategory,
   vCondition,
   vDay,
+  vLoanEventData,
+  vLoanEventType,
   vLoanStatus,
   vRole,
 } from "./validators";
@@ -65,6 +67,32 @@ export default defineSchema({
   })
     .index("by_loanId", ["loanId"])
     .index("by_idempotencyKey", ["idempotencyKey"]),
+
+  /**
+   * Outbox for Convex → n8n webhooks. Writing the row in the same transaction as
+   * the loan change means an event can't be lost; the delivery action retries
+   * with backoff and records a permanent failure instead of dropping it.
+   */
+  webhookDeliveries: defineTable({
+    loanId: v.id("loans"),
+    type: vLoanEventType,
+    kind: vAutomationKind,
+    data: vLoanEventData,
+    status: v.union(v.literal("pending"), v.literal("delivered"), v.literal("failed")),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    deliveredAt: v.optional(v.number()),
+  }).index("by_status", ["status"]),
+
+  /** Reported by the n8n error workflow, for failures not tied to a single loan. */
+  workflowErrors: defineTable({
+    idempotencyKey: v.string(),
+    workflow: v.string(),
+    executionId: v.optional(v.string()),
+    node: v.optional(v.string()),
+    message: v.string(),
+    at: v.number(),
+  }).index("by_idempotencyKey", ["idempotencyKey"]),
 
   /** Who did what, for admin actions and other sensitive changes. */
   auditLog: defineTable({

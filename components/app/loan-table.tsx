@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertTriangleIcon, BellIcon } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -10,12 +11,27 @@ import {
 } from "@/components/ui/table";
 import { categoryLabel, displayStatus } from "@/lib/domain";
 import { formatRange, timeAgo } from "@/lib/format";
+import { latestActivity } from "@/lib/activity";
 import type { LoanView } from "@/lib/types";
 import { useToday } from "@/lib/use-today";
+import { cn } from "@/lib/utils";
 import { Person } from "./person";
 import { StatusBadge } from "./status-badge";
 
 type Perspective = "borrower" | "lender" | "admin";
+
+/** Latest n8n activity, inline on every loan row ("Reminder sent 2 days ago"). */
+function ActivityLine({ loan }: { loan: LoanView }) {
+  const activity = latestActivity(loan.events);
+  if (!activity) return null;
+  const Icon = activity.failed ? AlertTriangleIcon : BellIcon;
+  return (
+    <p className={cn("mt-0.5 flex items-center gap-1 text-xs", activity.failed ? "text-destructive" : "text-muted-foreground")}>
+      <Icon className="size-3 shrink-0" />
+      {activity.text}
+    </p>
+  );
+}
 
 /**
  * One table for every loan list. The perspective decides which person column(s)
@@ -68,8 +84,9 @@ export function LoanTable({
                 <p className="text-xs text-muted-foreground">
                   <span className="sm:hidden">{formatRange(loan.startDate, loan.endDate)} · </span>
                   {categoryLabel(loan.tool.category)}
-                  <span className="hidden lg:inline"> · {timeAgo(loan._creationTime)}</span>
+                  <span className="hidden lg:inline"> · requested {timeAgo(loan._creationTime)}</span>
                 </p>
+                <ActivityLine loan={loan} />
               </TableCell>
               {showLender && (
                 <TableCell className="hidden md:table-cell">

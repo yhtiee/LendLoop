@@ -11,6 +11,7 @@ import {
   overlaps,
   todayUTC,
 } from "./lib/dates";
+import { emitLoanEvent } from "./lib/events";
 import { approvedLoansFor, cleanText, toLoanView } from "./lib/model";
 import { vDay } from "./validators";
 
@@ -84,7 +85,7 @@ export const request = mutation({
       throw new ConvexError("You already have a pending request for this tool.");
 
     const cleanNote = note ? cleanText(note, "Note", { max: 280 }) : "";
-    return await ctx.db.insert("loans", {
+    const loanId = await ctx.db.insert("loans", {
       toolId,
       lenderId: tool.ownerId,
       borrowerId: user._id,
@@ -93,6 +94,8 @@ export const request = mutation({
       status: "pending",
       ...(cleanNote ? { note: cleanNote } : {}),
     });
+    await emitLoanEvent(ctx, (await ctx.db.get("loans", loanId))!, "loan.requested");
+    return loanId;
   },
 });
 
@@ -128,6 +131,7 @@ export const decide = mutation({
         throw new ConvexError("Those dates now clash with another approved loan.");
     }
     await ctx.db.patch("loans", loanId, { status: decision, decidedAt: Date.now() });
+    await emitLoanEvent(ctx, { ...loan, status: decision }, decision === "approved" ? "loan.approved" : "loan.declined");
   },
 });
 
@@ -137,6 +141,7 @@ export const cancel = mutation({
     const { loan } = await loadLoanAs(ctx, loanId, "borrower");
     if (loan.status !== "pending") throw new ConvexError("Only pending requests can be cancelled.");
     await ctx.db.patch("loans", loanId, { status: "cancelled", decidedAt: Date.now() });
+    await emitLoanEvent(ctx, { ...loan, status: "cancelled" }, "loan.cancelled");
   },
 });
 
@@ -146,5 +151,6 @@ export const markReturned = mutation({
     const { loan } = await loadLoanAs(ctx, loanId, "lender");
     if (loan.status !== "approved") throw new ConvexError("Only approved loans can be marked returned.");
     await ctx.db.patch("loans", loanId, { status: "returned", returnedAt: Date.now() });
+    await emitLoanEvent(ctx, { ...loan, status: "returned" }, "loan.returned");
   },
 });

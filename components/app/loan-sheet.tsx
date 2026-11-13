@@ -25,7 +25,7 @@ import { StatusBadge } from "./status-badge";
 
 const eventCopy: Record<LoanEvent["kind"], { label: string; icon: typeof MailIcon }> = {
   request_notification: { label: "Owner notified of request", icon: SendIcon },
-  status_notification: { label: "Borrower notified", icon: MailIcon },
+  status_notification: { label: "Status update emailed", icon: MailIcon },
   overdue_reminder: { label: "Overdue reminder sent", icon: BellIcon },
 };
 

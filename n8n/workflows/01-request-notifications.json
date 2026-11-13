@@ -1,0 +1,320 @@
+{
+  "name": "LendLoop · Request notifications",
+  "nodes": [
+    {
+      "id": "d2a5615f-b07a-4d63-b093-5017164431a8",
+      "name": "LendLoop webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "c473cb6d-c556-4499-8d51-c7ff05a9573b",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "767bcaae-e176-4524-bff3-ab3551e1aee3",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\n// Verify the HMAC over the RAW request body (re-serialised JSON could differ byte-for-byte).\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst timestamp = headers['x-lendloop-timestamp'] || '';\nconst signature = headers['x-lendloop-signature'] || '';\nconst reject = (reason) => [{ json: { valid: false, reason } }];\n\nlet raw = '';\ntry { raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8'); } catch (e) {}\nif (!raw) return reject('Missing body');\nif (!/^\\d+$/.test(timestamp)) return reject('Missing timestamp');\nif (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return reject('Timestamp outside the 5 minute window');\n\nconst expected = 'sha256=' + crypto\n  .createHmac('sha256', setting('LENDLOOP_WEBHOOK_SECRET'))\n  .update(`${timestamp}.${raw}`)\n  .digest('hex');\nconst a = Buffer.from(expected);\nconst b = Buffer.from(signature);\nif (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return reject('Invalid signature');\n\nlet event;\ntry { event = JSON.parse(raw); } catch (e) { return reject('Body is not JSON'); }\nreturn [{ json: { valid: true, event } }];"
+      }
+    },
+    {
+      "id": "f7fafdc0-5cf1-4793-be8b-8984ec021140",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ced771ed-4ad6-4f0e-9b63-ab9426768698",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c20d60f4-972c-46eb-9d9c-8245d83352be",
+      "name": "Accept (202)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "757bdbae-8cec-4b38-8a64-6300a2d3a2d4",
+      "name": "Reject (401)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        420
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: $json.reason }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "7ad5bd69-708d-4787-a42e-386a5799b0e9",
+      "name": "Compose email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\nconst event = $('Verify signature').first().json.event;\nconst d = event.data;\nconst fmt = (day) => new Date(day + 'T00:00:00Z')\n  .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });\nconst range = d.startDate === d.endDate ? fmt(d.startDate) : `${fmt(d.startDate)} – ${fmt(d.endDate)}`;\nconst hi = `Hi ${d.recipient.firstName},`;\nconst sign = '\\n\\n— LendLoop';\n\nconst copy = {\n  'loan.requested': [\n    `${d.counterpartFirstName} wants to borrow your ${d.toolName}`,\n    `${hi}\\n\\n${d.counterpartFirstName} has asked to borrow your ${d.toolName} for ${range}.\\n\\nApprove or decline: ${d.url}`,\n  ],\n  'loan.approved': [\n    `Approved: ${d.toolName} for ${range}`,\n    `${hi}\\n\\n${d.counterpartFirstName} approved your request to borrow the ${d.toolName} for ${range}. Arrange pick-up with them directly.\\n\\nYour requests: ${d.url}`,\n  ],\n  'loan.declined': [\n    `Declined: ${d.toolName} for ${range}`,\n    `${hi}\\n\\n${d.counterpartFirstName} can't lend the ${d.toolName} for ${range} this time. Another neighbour may have one.\\n\\nYour requests: ${d.url}`,\n  ],\n  'loan.cancelled': [\n    `${d.counterpartFirstName} cancelled their request for your ${d.toolName}`,\n    `${hi}\\n\\n${d.counterpartFirstName} no longer needs your ${d.toolName} for ${range}. Nothing for you to do.\\n\\nIncoming requests: ${d.url}`,\n  ],\n  'loan.returned': [\n    `Thanks for returning the ${d.toolName}`,\n    `${hi}\\n\\n${d.counterpartFirstName} marked the ${d.toolName} as returned. Thanks for being a good neighbour.\\n\\nYour requests: ${d.url}`,\n  ],\n}[event.type];\n\nif (!copy) throw new Error(`Unknown event type: ${event.type}`);\n\nreturn [{ json: {\n  eventId: event.id,\n  loanId: d.loanId,\n  kind: event.kind,\n  type: event.type,\n  from: setting('LENDLOOP_FROM_EMAIL', { optional: true }) || 'LendLoop <no-reply@lendloop.app>',\n  to: d.recipient.email,\n  subject: copy[0],\n  text: copy[1] + sign,\n} }];"
+      }
+    },
+    {
+      "id": "bfca5816-a17f-4ee8-bbce-c8bd45276ffc",
+      "name": "Send email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        200
+      ],
+      "parameters": {
+        "fromEmail": "={{ $json.from }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "b06348c2-e47c-4fb2-8b10-894eb0f96bd7",
+      "name": "Report sent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        120
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\nconst c = $('Compose email').first().json;\n// idempotencyKey = event id, so a retried write-back can never double-record.\nreturn [{ json: signedCall('/n8n/events', {\n  idempotencyKey: c.eventId,\n  loanId: c.loanId,\n  kind: c.kind,\n  outcome: 'sent',\n  detail: c.type === 'loan.requested' ? undefined : c.type.replace('loan.', '').replace(/^./, (s) => s.toUpperCase()),\n}) }];"
+      }
+    },
+    {
+      "id": "3153a444-ad55-4d67-a433-36c115e63bc2",
+      "name": "Report failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\nconst c = $('Compose email').first().json;\nreturn [{ json: signedCall('/n8n/events', {\n  idempotencyKey: c.eventId,\n  loanId: c.loanId,\n  kind: c.kind,\n  outcome: 'failed',\n  detail: `Email failed: ${errorText($input.first().json.error)}`.slice(0, 300),\n}) }];"
+      }
+    },
+    {
+      "id": "20e506cf-0cfe-4e61-89ad-bf1432d999e3",
+      "name": "Write back to LendLoop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "LendLoop webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Accept (202)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject (401)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept (202)": {
+      "main": [
+        [
+          {
+            "node": "Compose email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose email": {
+      "main": [
+        [
+          {
+            "node": "Send email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email": {
+      "main": [
+        [
+          {
+            "node": "Report sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report sent": {
+      "main": [
+        [
+          {
+            "node": "Write back to LendLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report failure": {
+      "main": [
+        [
+          {
+            "node": "Write back to LendLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

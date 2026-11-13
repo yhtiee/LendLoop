@@ -1,0 +1,304 @@
+{
+  "name": "LendLoop · Overdue reminders",
+  "nodes": [
+    {
+      "id": "a9de7b87-d345-4b7b-abd4-eb60d1ba71b3",
+      "name": "Every day at 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d190bec8-4b0a-45be-bf04-c9007dfd8ab2",
+      "name": "Sign request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\nreturn [{ json: signedCall('/n8n/overdue', {}) }];"
+      }
+    },
+    {
+      "id": "aca064f7-8c7b-4f9d-ac20-a9253571c38e",
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "97fd8b51-6422-409b-a7d3-7917aa6408e2",
+      "name": "One item per loan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// One item per overdue loan. Returning nothing ends the run quietly.\nconst loans = $input.first().json.loans || [];\nreturn loans.map((loan) => ({ json: loan }));"
+      }
+    },
+    {
+      "id": "dc8cec34-4e42-4085-9596-84ac7ff81ab4",
+      "name": "Compose reminder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\nconst l = $json;\nconst fmt = (day) => new Date(day + 'T00:00:00Z')\n  .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });\nconst when = l.daysOverdue === 1 ? 'yesterday' : `${l.daysOverdue} days ago`;\n\nreturn { json: {\n  loanId: l.loanId,\n  idempotencyKey: l.idempotencyKey,\n  from: setting('LENDLOOP_FROM_EMAIL', { optional: true }) || 'LendLoop <no-reply@lendloop.app>',\n  to: l.borrower.email,\n  subject: `Reminder: the ${l.toolName} was due back ${when}`,\n  text: `Hi ${l.borrower.firstName},\\n\\nThe ${l.toolName} you borrowed from ${l.lenderFirstName} was due back on ${fmt(l.endDate)}. Please return it, and ask ${l.lenderFirstName} to mark it returned in LendLoop.\\n\\nYour requests: ${l.url}\\n\\n— LendLoop`,\n} };",
+        "mode": "runOnceForEachItem"
+      }
+    },
+    {
+      "id": "406a4242-dc30-43aa-aab1-01a48d35b198",
+      "name": "Send reminder",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "={{ $json.from }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "d93d5304-5154-4ede-8618-f33ab99e8ebd",
+      "name": "Report sent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\nconst c = $('Compose reminder').item.json;\n// Per-loan, per-day key: re-running the workflow the same day can't double-record.\nreturn { json: signedCall('/n8n/events', {\n  idempotencyKey: c.idempotencyKey,\n  loanId: c.loanId,\n  kind: 'overdue_reminder',\n  outcome: 'sent',\n}) };",
+        "mode": "runOnceForEachItem"
+      }
+    },
+    {
+      "id": "08d11dcb-ee11-4ffa-b257-d590f282d918",
+      "name": "Report failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Secrets come from n8n Variables (Cloud: Overview > Variables) or, when self-hosting,\n// from environment variables (N8N_BLOCK_ENV_ACCESS_IN_NODE=false). Never hard-coded.\nfunction setting(name, { optional = false } = {}) {\n  try { if ($vars && $vars[name]) return $vars[name]; } catch (e) {}\n  try { if ($env && $env[name]) return $env[name]; } catch (e) {}\n  if (optional) return undefined;\n  throw new Error(`${name} is not set. Add it as an n8n Variable (Cloud) or environment variable (self-hosted).`);\n}\n\n// Signs a call back into LendLoop: sha256=HMAC(secret, `${timestamp}.${body}`)\nfunction signedCall(path, payload) {\n  const body = JSON.stringify(payload);\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = 'sha256=' + crypto\n    .createHmac('sha256', setting('LENDLOOP_CALLBACK_SECRET'))\n    .update(`${timestamp}.${body}`)\n    .digest('hex');\n  const base = setting('LENDLOOP_CONVEX_SITE_URL').replace(/\\/$/, '');\n  return { url: base + path, body, timestamp, signature };\n}\n\nfunction errorText(e) {\n  if (!e) return 'unknown error';\n  if (typeof e === 'string') return e;\n  return e.message || e.description || JSON.stringify(e).slice(0, 300);\n}\n\nconst c = $('Compose reminder').item.json;\nreturn { json: signedCall('/n8n/events', {\n  idempotencyKey: c.idempotencyKey,\n  loanId: c.loanId,\n  kind: 'overdue_reminder',\n  outcome: 'failed',\n  detail: `Email failed: ${errorText($json.error)}`.slice(0, 300),\n}) };",
+        "mode": "runOnceForEachItem"
+      }
+    },
+    {
+      "id": "6f4d33e5-15e3-4edd-be2b-0c4ab19435c4",
+      "name": "Write back to LendLoop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Every day at 08:00": {
+      "main": [
+        [
+          {
+            "node": "Sign request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign request": {
+      "main": [
+        [
+          {
+            "node": "Fetch overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch overdue loans": {
+      "main": [
+        [
+          {
+            "node": "One item per loan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per loan": {
+      "main": [
+        [
+          {
+            "node": "Compose reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose reminder": {
+      "main": [
+        [
+          {
+            "node": "Send reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reminder": {
+      "main": [
+        [
+          {
+            "node": "Report sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report sent": {
+      "main": [
+        [
+          {
+            "node": "Write back to LendLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report failure": {
+      "main": [
+        [
+          {
+            "node": "Write back to LendLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

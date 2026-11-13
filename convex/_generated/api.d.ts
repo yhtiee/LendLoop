@@ -9,14 +9,20 @@
  */
 
 import type * as admin from "../admin.js";
+import type * as automation from "../automation.js";
+import type * as dev from "../dev.js";
+import type * as http from "../http.js";
 import type * as lib_audit from "../lib/audit.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_dates from "../lib/dates.js";
+import type * as lib_events from "../lib/events.js";
+import type * as lib_hmac from "../lib/hmac.js";
 import type * as lib_model from "../lib/model.js";
 import type * as loans from "../loans.js";
 import type * as tools from "../tools.js";
 import type * as users from "../users.js";
 import type * as validators from "../validators.js";
+import type * as webhooks from "../webhooks.js";
 
 import type {
   ApiFromModules,
@@ -26,14 +32,20 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
+  automation: typeof automation;
+  dev: typeof dev;
+  http: typeof http;
   "lib/audit": typeof lib_audit;
   "lib/auth": typeof lib_auth;
   "lib/dates": typeof lib_dates;
+  "lib/events": typeof lib_events;
+  "lib/hmac": typeof lib_hmac;
   "lib/model": typeof lib_model;
   loans: typeof loans;
   tools: typeof tools;
   users: typeof users;
   validators: typeof validators;
+  webhooks: typeof webhooks;
 }>;
 
 /**

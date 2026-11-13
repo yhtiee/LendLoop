@@ -25,10 +25,20 @@ export default function AdminOverviewPage() {
   const members = useQuery(api.admin.members, {});
   const listings = useQuery(api.admin.listings, { today });
   const events = useQuery(api.admin.automationEvents, {});
+  const workflowErrors = useQuery(api.admin.workflowErrors, {});
 
   const active = loans?.filter((l) => l.status === "approved");
   const overdue = active?.filter((l) => displayStatus(l, today) === "overdue");
-  const failures = events?.filter((e) => e.outcome === "failed");
+  // Loan-level failures and workflow-level errors, newest first.
+  const failures =
+    events && workflowErrors
+      ? [
+          ...events
+            .filter((e) => e.outcome === "failed")
+            .map((e) => ({ _id: e._id, title: e.toolName, detail: e.detail ?? "Workflow failed", at: e.at, loanId: e.loanId as string | null })),
+          ...workflowErrors.map((e) => ({ _id: e._id, title: e.workflow, detail: e.message, at: e.at, loanId: null })),
+        ].sort((a, b) => b.at - a.at)
+      : undefined;
   const selected = loans?.find((l) => l._id === selectedId) ?? null;
 
   const stats = [
@@ -86,14 +96,17 @@ export default function AdminOverviewPage() {
             failures?.slice(0, 8).map((f) => (
               <li
                 key={f._id}
-                onClick={() => setSelectedId(f.loanId)}
-                className="flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+                onClick={() => f.loanId && setSelectedId(f.loanId)}
+                className={cn(
+                  "flex items-start gap-3 px-4 py-3 transition-colors",
+                  f.loanId && "cursor-pointer hover:bg-muted/40"
+                )}
               >
                 <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{f.toolName}</p>
+                  <p className="truncate text-sm font-medium">{f.title}</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {f.detail ?? "Workflow failed"} · {timeAgo(f.at)}
+                    {f.detail} · {timeAgo(f.at)}
                   </p>
                 </div>
               </li>

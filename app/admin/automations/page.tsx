@@ -33,6 +33,7 @@ const kindLabel: Record<AutomationEventView["kind"], string> = {
 
 export default function AutomationsPage() {
   const events = useQuery(api.admin.automationEvents, {});
+  const workflowErrors = useQuery(api.admin.workflowErrors, {});
   const failed = events?.filter((e) => e.outcome === "failed").length;
   const rate = events && events.length ? Math.round(((events.length - (failed ?? 0)) / events.length) * 100) : null;
 
@@ -67,6 +68,33 @@ export default function AutomationsPage() {
           </div>
         ))}
       </section>
+
+      {!!workflowErrors?.length && (
+        <section className="overflow-hidden rounded-lg border border-destructive/30">
+          <div className="flex h-11 items-center gap-2 border-b border-destructive/30 bg-destructive/5 px-4">
+            <ShieldAlertIcon className="size-4 text-destructive" />
+            <h2 className="text-sm font-medium">Workflow errors</h2>
+            <span className="text-xs text-muted-foreground">reported by the n8n error handler</span>
+          </div>
+          <ul className="divide-y">
+            {workflowErrors.slice(0, 10).map((e) => (
+              <li key={e._id} className="flex items-start justify-between gap-4 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    {e.workflow}
+                    {e.node && <span className="font-normal text-muted-foreground"> · {e.node}</span>}
+                  </p>
+                  <p className="truncate text-xs text-destructive">{e.message}</p>
+                </div>
+                <div className="shrink-0 text-right text-xs text-muted-foreground">
+                  <p>{timeAgo(e.at)}</p>
+                  {e.executionId && <p className="font-mono">#{e.executionId}</p>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {events === undefined ? (
         <TableSkeleton />

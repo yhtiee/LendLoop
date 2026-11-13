@@ -1,0 +1,74 @@
+# Self-hosted n8n for LendLoop (alternative to n8n Cloud).
+#
+#   cp n8n/.env.example n8n/.env   # fill in the values
+#   docker compose up -d
+#
+#   n8n      http://localhost:5678
+#   Mailpit  http://localhost:8025   (catches every email n8n sends; SMTP host "mailpit", port 1025)
+#
+# Convex Cloud can't reach localhost, so to receive webhooks start the tunnel too:
+#   docker compose --profile tunnel up -d
+#   docker compose logs tunnel   # copy the https://<random>.trycloudflare.com URL
+#   npx convex env set N8N_WEBHOOK_URL https://<random>.trycloudflare.com/webhook/lendloop-events
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in n8n/.env}
+      POSTGRES_DB: n8n
+    volumes:
+      - n8n_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n:
+    # Pin an exact version in production; "stable" tracks the latest stable release.
+    image: docker.n8n.io/n8nio/n8n:stable
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    env_file: n8n/.env
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Encrypts stored credentials (e.g. SMTP). Keep it stable and secret.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in n8n/.env}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
+      # The LendLoop Code nodes read LENDLOOP_* from env when n8n Variables aren't available.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # Code nodes need Node's crypto module for HMAC signing/verification.
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      N8N_DIAGNOSTICS_ENABLED: "false"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate --url http://n8n:5678
+    depends_on:
+      - n8n
+
+volumes:
+  n8n_db:
+  n8n_data:

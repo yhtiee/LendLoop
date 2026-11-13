@@ -77,6 +77,22 @@ export const setTrustedLender = mutation({
   },
 });
 
+export const workflowErrors = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const errors = await ctx.db.query("workflowErrors").order("desc").take(50);
+    return errors.map((e) => ({
+      _id: e._id,
+      workflow: e.workflow,
+      executionId: e.executionId ?? null,
+      node: e.node ?? null,
+      message: e.message,
+      at: e.at,
+    }));
+  },
+});
+
 export const automationEvents = query({
   args: {},
   handler: async (ctx) => {
